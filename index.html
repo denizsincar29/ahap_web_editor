@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AHAP Web Editor - accessible haptic pattern editor</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#itemList">Skip to event list</a>
+
+<header class="app-header">
+  <h1>AHAP Web Editor</h1>
+  <p class="subtitle">Accessible haptic (.ahap) pattern editor - MIDI import, .msh music-haptics DSL, and manual keyboard authoring.</p>
+</header>
+
+<div id="liveStatus" class="sr-live" aria-live="polite" aria-atomic="true"></div>
+<div id="liveAlert" class="sr-live" aria-live="assertive" aria-atomic="true"></div>
+
+<main>
+  <section class="toolbar" aria-label="File actions">
+    <h2 class="visually-hidden">File</h2>
+    <button type="button" id="btnNew">New pattern</button>
+    <button type="button" id="btnOpenAhap">Open .ahap</button>
+    <button type="button" id="btnImportMsh">Import .msh</button>
+    <button type="button" id="btnImportMidi">Import MIDI</button>
+    <button type="button" id="btnSaveAhap">Save .ahap</button>
+    <button type="button" id="btnExportMsh">Export .msh (raw events)</button>
+    <input type="file" id="fileAhap" accept=".ahap,.json" class="visually-hidden" aria-hidden="true">
+    <input type="file" id="fileMsh" accept=".msh,.txt" class="visually-hidden" aria-hidden="true">
+    <input type="file" id="fileMidi" accept=".mid,.midi" class="visually-hidden" aria-hidden="true">
+  </section>
+
+  <section class="toolbar" aria-label="Insert mode and playback">
+    <h2 class="visually-hidden">Mode and playback</h2>
+    <fieldset class="mode-group">
+      <legend>Insert mode</legend>
+      <label><input type="radio" name="insertMode" value="melody" checked> Melody (letters A-G)</label>
+      <label><input type="radio" name="insertMode" value="drums"> Drums (k t s h x o c r)</label>
+      <label><input type="radio" name="insertMode" value="raw"> Raw (t = transient, c = continuous)</label>
+    </fieldset>
+    <div class="field-row" style="margin:0;">
+      <label for="fTempo">Tempo (BPM)</label>
+      <input type="number" id="fTempo" value="120" min="20" max="400" step="1" style="width:5rem;">
+    </div>
+    <button type="button" id="btnPlayFromCursor">Play from cursor (Ctrl+Space)</button>
+    <button type="button" id="btnPlaySelected">Play selected (P)</button>
+    <button type="button" id="btnStop">Stop (Escape)</button>
+    <button type="button" id="btnHelp" aria-expanded="false" aria-controls="helpPanel">Keyboard shortcuts</button>
+  </section>
+
+  <section class="status-bar" aria-label="Editor status">
+    <span id="statusTime">Cursor: 0.000s</span>
+    <span id="statusSelection">Selected: none</span>
+    <span id="statusCount">0 items</span>
+    <span id="statusOctave">Octave: 4</span>
+    <span id="statusDuration">Duration: eighth</span>
+    <span id="statusStep">Time step: 0.05s</span>
+  </section>
+
+  <section id="helpPanel" class="help-panel" hidden>
+    <h2>Keyboard shortcuts</h2>
+    <h3>Navigation</h3>
+    <ul>
+      <li><kbd>Left</kbd> / <kbd>Right</kbd> - move time cursor by one step</li>
+      <li><kbd>Ctrl+Left</kbd> / <kbd>Ctrl+Right</kbd> - select previous / next item, cursor jumps to it</li>
+      <li><kbd>[</kbd> / <kbd>]</kbd> - decrease / increase time step size</li>
+      <li><kbd>Home</kbd> / <kbd>End</kbd> - jump cursor to start / end of pattern</li>
+      <li><kbd>Tab</kbd> - move focus into the item list, form fields, or toolbar as usual</li>
+    </ul>
+    <h3>Insert (Melody mode)</h3>
+    <ul>
+      <li><kbd>A</kbd>-<kbd>G</kbd> - insert a note at the cursor, advance cursor by current duration</li>
+      <li><kbd>Shift+A</kbd>-<kbd>Shift+G</kbd> - insert a sharp note</li>
+      <li><kbd>Alt+A</kbd>-<kbd>Alt+G</kbd> - insert a flat note</li>
+      <li><kbd>-</kbd> - rest (advance cursor only)</li>
+      <li><kbd>!</kbd> then a note - accent the next inserted note (louder)</li>
+      <li><kbd>Ctrl+Up</kbd> / <kbd>Ctrl+Down</kbd> - octave up / down</li>
+      <li><kbd>1</kbd>-<kbd>6</kbd> - set note duration: whole, half, quarter, eighth, sixteenth, thirtysecond</li>
+    </ul>
+    <h3>Insert (Drums mode)</h3>
+    <ul>
+      <li><kbd>K</kbd> kick, <kbd>T</kbd> tom, <kbd>S</kbd> snare, <kbd>H</kbd> closed hi-hat, <kbd>X</kbd> clap, <kbd>O</kbd> open hi-hat, <kbd>C</kbd> crash, <kbd>R</kbd> ride</li>
+      <li><kbd>-</kbd> rest, <kbd>!</kbd> accent next hit, <kbd>1</kbd>-<kbd>6</kbd> duration</li>
+    </ul>
+    <h3>Insert (Raw mode)</h3>
+    <ul>
+      <li><kbd>T</kbd> - insert a plain transient at the cursor</li>
+      <li><kbd>C</kbd> - insert a plain continuous event at the cursor (default 0.2s)</li>
+    </ul>
+    <h3>Editing</h3>
+    <ul>
+      <li><kbd>Enter</kbd> - open the detail form for the selected item (precise numeric editing)</li>
+      <li><kbd>Delete</kbd> / <kbd>Backspace</kbd> - delete the selected item</li>
+      <li><kbd>Ctrl+C</kbd> - copy selected item</li>
+      <li><kbd>Ctrl+V</kbd> - paste copied item at the cursor time</li>
+      <li><kbd>Up</kbd> / <kbd>Down</kbd> - nudge selected item's intensity</li>
+      <li><kbd>Shift+Up</kbd> / <kbd>Shift+Down</kbd> - nudge selected item's sharpness</li>
+    </ul>
+    <h3>Playback</h3>
+    <ul>
+      <li><kbd>P</kbd> - preview the selected item alone</li>
+      <li><kbd>Ctrl+Space</kbd> - play the whole pattern from the cursor</li>
+      <li><kbd>Escape</kbd> - stop playback</li>
+    </ul>
+  </section>
+
+  <section aria-label="Pattern items">
+    <h2 class="visually-hidden">Items</h2>
+    <div
+      id="itemList"
+      class="item-list"
+      role="listbox"
+      aria-label="Haptic pattern items, use arrow keys to navigate and letter keys to insert"
+      tabindex="0">
+    </div>
+    <p id="emptyHint" class="empty-hint">No items yet. Focus this list and start typing note letters, or import a MIDI / .msh file.</p>
+  </section>
+
+  <section id="detailForm" class="detail-form" hidden aria-label="Item details">
+    <h2>Item details</h2>
+    <form id="editForm">
+      <p id="editKind"></p>
+      <div class="field-row">
+        <label for="fTime">Time (seconds)</label>
+        <input type="number" id="fTime" step="0.001" min="0">
+      </div>
+      <div class="field-row" id="rowDuration">
+        <label for="fDuration">Duration (seconds)</label>
+        <input type="number" id="fDuration" step="0.001" min="0.001">
+      </div>
+      <div class="field-row">
+        <label for="fIntensity">Intensity (0-1)</label>
+        <input type="number" id="fIntensity" step="0.01" min="0" max="1">
+      </div>
+      <div class="field-row">
+        <label for="fSharpness">Sharpness (0-1)</label>
+        <input type="number" id="fSharpness" step="0.01" min="0" max="1">
+      </div>
+      <div class="field-row">
+        <label for="fAttack">Attack (seconds, blank = default)</label>
+        <input type="number" id="fAttack" step="0.001" min="0">
+      </div>
+      <div class="field-row">
+        <label for="fDecay">Decay (seconds, blank = default)</label>
+        <input type="number" id="fDecay" step="0.001" min="0">
+      </div>
+      <div class="field-row">
+        <label for="fRelease">Release (seconds, blank = default)</label>
+        <input type="number" id="fRelease" step="0.001" min="0">
+      </div>
+      <div class="field-row">
+        <label for="fLabel">Label (for screen reader / your own notes)</label>
+        <input type="text" id="fLabel">
+      </div>
+      <div class="form-actions">
+        <button type="submit">Apply (Enter)</button>
+        <button type="button" id="btnCancelEdit">Cancel (Escape)</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="websocket-panel" aria-label="Experimental WebSocket send">
+    <h2>Send over WebSocket (experimental)</h2>
+    <p>
+      Sends the pattern as JSON to a WebSocket server of your choice, event by event,
+      scheduled by each event's own time. There is currently no known public app that
+      receives this over the air and plays it back - this is here so you can point it
+      at your own receiver (phone app, ESP32 haptic driver, etc) if you build one.
+    </p>
+    <div class="field-row">
+      <label for="wsUrl">WebSocket URL</label>
+      <input type="text" id="wsUrl" placeholder="wss://example.local:8080/ahap">
+    </div>
+    <button type="button" id="btnWsConnect">Connect</button>
+    <button type="button" id="btnWsSend">Send pattern from cursor</button>
+    <span id="wsStatus">Not connected</span>
+  </section>
+</main>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
