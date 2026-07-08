@@ -14,9 +14,9 @@ cd "$(dirname "$0")"
 
 echo "Deploying to $TARGET ..."
 mkdir -p "$TARGET"
-git ls-files | rsync -av --files-from=- . "$TARGET/"
+git ls-files | grep -v -e '^deploy\.sh$' -e '^README\.md$' | rsync -av --files-from=- . "$TARGET/"
 
 echo "Fixing ownership ($OWNER:$GROUP) ..."
-chown -R "$OWNER":"$GROUP" "$TARGET"
+sudo chown -R "$OWNER":"$GROUP" "$TARGET"
 
 echo "Done."
