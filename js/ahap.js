@@ -76,6 +76,15 @@ export function makeCurve({ time, parameterId, points, label = null }) {
   return { id: nextId(), kind: "curve", time, parameterId, points, label };
 }
 
+/** A dual-parameter curve span authored via Shift+C ... Shift+C in the
+ * editor. Internally holds separate sharpness/intensity point lists (each
+ * relative to `time`); splits into up to two real AHAP ParameterCurve
+ * entries on export. Editor-only convenience - real AHAP has no such
+ * combined concept. */
+export function makeCurveRegion({ time, endTime, sharpnessPoints = [], intensityPoints = [], label = null }) {
+  return { id: nextId(), kind: "curveRegion", time, endTime, sharpnessPoints, intensityPoints, label };
+}
+
 export function cloneItem(item) {
   const copy = JSON.parse(JSON.stringify(item));
   copy.id = nextId();
@@ -84,6 +93,7 @@ export function cloneItem(item) {
 
 export function itemEndTime(item) {
   if (item.kind === "continuous") return item.time + item.duration;
+  if (item.kind === "curveRegion") return item.endTime;
   if (item.kind === "curve") {
     const last = item.points.length ? item.points[item.points.length - 1].time : 0;
     return item.time + last;
@@ -106,15 +116,39 @@ function envelopeParams(item) {
 }
 
 export function itemsToAhap(items, meta = {}) {
-  const pattern = sortItems(items).map((item) => {
+  const pattern = sortItems(items).flatMap((item) => {
+    if (item.kind === "curveRegion") {
+      const entries = [];
+      if (item.sharpnessPoints && item.sharpnessPoints.length) {
+        entries.push({
+          ParameterCurve: {
+            ParameterID: CURVE_SHARPNESS,
+            Time: item.time,
+            ParameterCurveControlPoints: item.sharpnessPoints.map((p) => ({ Time: p.time, ParameterValue: p.value })),
+          },
+        });
+      }
+      if (item.intensityPoints && item.intensityPoints.length) {
+        entries.push({
+          ParameterCurve: {
+            ParameterID: CURVE_INTENSITY,
+            Time: item.time,
+            ParameterCurveControlPoints: item.intensityPoints.map((p) => ({ Time: p.time, ParameterValue: p.value })),
+          },
+        });
+      }
+      return entries;
+    }
     if (item.kind === "curve") {
-      return {
-        ParameterCurve: {
-          ParameterID: item.parameterId,
-          Time: item.time,
-          ParameterCurveControlPoints: item.points.map((p) => ({ Time: p.time, ParameterValue: p.value })),
+      return [
+        {
+          ParameterCurve: {
+            ParameterID: item.parameterId,
+            Time: item.time,
+            ParameterCurveControlPoints: item.points.map((p) => ({ Time: p.time, ParameterValue: p.value })),
+          },
         },
-      };
+      ];
     }
     const params = [
       { ParameterID: PARAM_INTENSITY, ParameterValue: item.intensity },
@@ -127,19 +161,22 @@ export function itemsToAhap(items, meta = {}) {
       EventParameters: params,
     };
     if (item.kind === "continuous") event.EventDuration = item.duration;
-    return { Event: event };
+    return [{ Event: event }];
   });
 
-  return {
-    Version: 1.0,
-    Metadata: {
-      Project: meta.project || "Basis",
-      Created: meta.created || (Date.now() / 1000).toFixed(6),
-      Description: meta.description || "made in ahap web editor",
-      "Created By": meta.createdBy || "ahap web editor",
-    },
-    Pattern: pattern,
+  const metadata = {
+    Project: meta.project || "Basis",
+    Created: meta.created || (Date.now() / 1000).toFixed(6),
+    Description: meta.description || "made in ahap web editor",
+    "Created By": meta.createdBy || "ahap web editor",
   };
+  // Not part of the official AHAP schema - real players/parsers ignore
+  // unrecognized Metadata keys, so this is a harmless way to round-trip
+  // the editor's bar/beat grid through a plain .ahap file.
+  if (meta.tempo) metadata.Tempo = meta.tempo;
+  if (meta.timeSignature) metadata.TimeSignature = meta.timeSignature;
+
+  return { Version: 1.0, Metadata: metadata, Pattern: pattern };
 }
 
 export function ahapToJson(ahap, indent = true) {
@@ -191,5 +228,7 @@ export function metaFromAhap(ahapObj) {
     created: m.Created,
     description: m.Description,
     createdBy: m["Created By"],
+    tempo: m.Tempo,
+    timeSignature: m.TimeSignature,
   };
 }

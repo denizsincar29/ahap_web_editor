@@ -28,22 +28,50 @@ server.
   (`Version`/`Metadata`/`Pattern`, `HapticTransient`/`HapticContinuous`
   events, `ParameterCurve` control points), so files round-trip with
   `ahap_rs` and with Apple's own tooling.
-- **Manual keyboard authoring** - an accessible item list (`role="listbox"`,
-  `aria-activedescendant`, live-region announcements for every action) with:
-  - `Left`/`Right` moves a time cursor by a step; `Ctrl+Left`/`Ctrl+Right`
-    moves the selection between existing items.
-  - Three insert modes: **Melody** (letters `A`-`G`, `Shift` for sharp,
-    `Alt` for flat, `1`-`6` for note duration, `Ctrl+Up`/`Ctrl+Down` for
-    octave, `!` to arm an accent), **Drums** (`k t s h x o c r`), and **Raw**
-    (`t`/`c` for a plain transient/continuous event).
-  - `Enter` opens a full form for precise numeric editing (time, duration,
+- **Manual keyboard authoring, DAW-style** - an accessible item list
+  (`role="listbox"`, `aria-activedescendant`, live-region announcements for
+  every action):
+  - `Left`/`Right` moves a time cursor; `Ctrl+Left`/`Ctrl+Right` moves the
+    selection between existing items.
+  - `N` switches to **Normal** mode from anywhere. In Normal mode: `T`
+    inserts a transient; `C` then `C` again starts and closes a continuous
+    event (press once at the start time, move the cursor, press again at
+    the end time); `Shift+C` then `Shift+C` again starts and closes a
+    **curve region**; `Shift+P`, with the cursor inside a curve region,
+    opens a popup to add a point (choose sharpness or intensity, enter a
+    value); `A`/`D`/`R` open a popup to set the selected event's
+    attack/decay/release time.
+  - **Melody** mode (`A`-`G`, `Shift` for sharp, `Alt` for flat, `!` to
+    accent, `Ctrl+Up`/`Ctrl+Down` for octave) and **Drums** mode
+    (`k t s h x o c r`) work as before.
+  - Press `-` (dash) for a popup to set time signature and tempo; this
+    switches cursor movement from raw seconds to bars/beats. While in that
+    mode, `1`-`9` zoom the step size (bar, half bar, beat, half beat,
+    triplet, quarter beat, sixth, eighth, sixteenth); in plain seconds mode
+    `1`-`6` instead set the Melody/Drums note duration.
+  - `M` marks a time range (press once for the start, again for the end);
+    `Ctrl+C`/`Ctrl+V` then copy every item in that range **on the active
+    track** and paste them at the cursor - the mechanism behind "copy 4
+    bars of transients, skip everything else".
+  - **Tracks** are an editor-only way to group items (e.g. keep transients
+    and continuous events on separate lanes for range-copying). They're
+    merged together into a single `Pattern` array on `.ahap` export. `V`
+    toggles showing only the active track; the Tracks panel below the item
+    list lets you add/rename/switch/delete tracks.
+  - `Enter` opens a full form for every field at once (time, duration,
     intensity, sharpness, attack/decay/release, a free-text label used for
-    screen reader announcements).
-  - `Delete`/`Backspace` to delete, `Ctrl+C`/`Ctrl+V` to copy/paste at the
-    cursor, `Up`/`Down` (and `Shift+Up`/`Shift+Down`) to nudge intensity/
-    sharpness without opening the form.
-  - A collapsible keyboard-shortcuts panel (`Keyboard shortcuts` button)
-    documents all of the above in the page itself.
+    screen reader announcements) when you want everything in one place
+    instead of one popup per field.
+  - `H` opens a compact popup listing every shortcut; there's also a
+    persistent, expandable panel (`Keyboard shortcuts` button) with the
+    same information plus more context.
+  - `Delete`/`Backspace` deletes, `Up`/`Down` (and `Shift+Up`/`Shift+Down`)
+    nudge intensity/sharpness without opening any popup.
+- **A lossless project format** (`Save project (.hstudio.json)`) that keeps
+  tracks, curve regions, and the bar/beat grid exactly as authored, since
+  `.ahap` itself has no concept of tracks and only informally carries
+  tempo/time signature via extra `Metadata` keys (`Tempo`, `TimeSignature`)
+  that real AHAP players/parsers should just ignore.
 - **Triangle-wave audio preview** - Web Audio, no device haptics required:
   sharpness maps to pitch (haptic 80-230 Hz range scaled up for audibility),
   intensity to gain, attack/decay/release shape the envelope, and
@@ -83,4 +111,17 @@ js/main.js          - DOM wiring, file import/export, WebSocket sender
 - `.msh` export from the editor always writes the raw `@events` form
   (one line per item) rather than trying to re-derive melody/drum notation
   from sharpness/intensity values, so nothing is lost on export, but the
-  output isn't as pretty as a hand-written `.msh` file.
+  output isn't as pretty as a hand-written `.msh` file. Curve regions with
+  more than two points get flattened to a `from`/`to`/`steps` linear
+  approximation in `.msh` export (the `.ahap` and project exports keep
+  every point exactly).
+- Curve regions (`Shift+C ... Shift+C`) model real AHAP `ParameterCurve`
+  behavior as "modulates anything playing during this time span" rather
+  than tying a curve to one specific event - this matches how AHAP engines
+  actually apply parameter curves, but the audio preview's sampling of
+  overlapping curves is an approximation, not a bit-exact reimplementation
+  of Apple's haptic engine.
+- Tracks, curve regions as a distinct concept, and the bar/beat grid are
+  editor-only. They round-trip perfectly through the project
+  (`.hstudio.json`) format, but flatten/merge on `.ahap` export as
+  described above.

@@ -38,6 +38,16 @@ const dom = {
   fRelease: byId("fRelease"),
   fLabel: byId("fLabel"),
   btnCancelEdit: byId("btnCancelEdit"),
+  popup: byId("popup"),
+  popupTitle: byId("popupTitle"),
+  popupForm: byId("popupForm"),
+  popupFields: byId("popupFields"),
+  popupOk: byId("popupOk"),
+  popupCancel: byId("popupCancel"),
+  trackList: byId("trackList"),
+  btnAddTrack: byId("btnAddTrack"),
+  btnDeleteTrack: byId("btnDeleteTrack"),
+  chkSoloTrack: byId("chkSoloTrack"),
 };
 
 const editor = new Editor(dom);
@@ -76,7 +86,12 @@ byId("btnNew").addEventListener("click", () => {
 });
 
 byId("btnSaveAhap").addEventListener("click", () => {
-  const ahap = itemsToAhap(editor.items, { createdBy: "ahap web editor" });
+  const meta = { createdBy: "ahap web editor" };
+  if (editor.timeMode === "bars") {
+    meta.tempo = parseFloat(dom.fTempo.value) || 120;
+    meta.timeSignature = `${editor.timeSig.num}/${editor.timeSig.den}`;
+  }
+  const ahap = itemsToAhap(editor.items, meta);
   downloadText("pattern.ahap", ahapToJson(ahap, true));
   editor.announce("saved pattern.ahap");
 });
@@ -101,6 +116,18 @@ byId("btnExportMsh").addEventListener("click", () => {
       lines.push(
         `curve ${param} t=${item.time} duration=${last ? last.time : 0} from=${first ? first.value : 0} to=${last ? last.value : 0} steps=${item.points.length}`
       );
+    } else if (item.kind === "curveRegion") {
+      const span = item.endTime - item.time;
+      if (item.sharpnessPoints.length) {
+        const first = item.sharpnessPoints[0];
+        const last = item.sharpnessPoints[item.sharpnessPoints.length - 1];
+        lines.push(`curve sharpness t=${item.time} duration=${span} from=${first.value} to=${last.value} steps=${item.sharpnessPoints.length}`);
+      }
+      if (item.intensityPoints.length) {
+        const first = item.intensityPoints[0];
+        const last = item.intensityPoints[item.intensityPoints.length - 1];
+        lines.push(`curve intensity t=${item.time} duration=${span} from=${first.value} to=${last.value} steps=${item.intensityPoints.length}`);
+      }
     }
   }
   downloadText("pattern.msh", lines.join("\n") + "\n", "text/plain");
@@ -128,13 +155,23 @@ wireFileImport("btnOpenAhap", "fileAhap", async (file) => {
   const text = await file.text();
   const obj = JSON.parse(text);
   const items = ahapToItems(obj);
+  const meta = metaFromAhap(obj);
   editor.loadItems(items, { announceMsg: `opened ${file.name}, ${items.length} items` });
+  if (meta.tempo) dom.fTempo.value = meta.tempo;
+  if (meta.timeSignature && /^\d+\/\d+$/.test(meta.timeSignature)) {
+    const [num, den] = meta.timeSignature.split("/").map(Number);
+    editor.timeSig = { num, den };
+    editor.timeMode = "bars";
+    editor._recomputeTimeStep();
+    editor.render();
+  }
 });
 
 wireFileImport("btnImportMsh", "fileMsh", async (file) => {
   const text = await file.text();
   const { items, warnings } = parseMsh(text);
   editor.loadItems(items, {
+    trackName: file.name,
     announceMsg: `imported ${file.name}, ${items.length} items${warnings.length ? ", " + warnings.length + " warnings" : ""}`,
   });
   if (warnings.length) console.warn(warnings.join("\n"));
@@ -145,9 +182,46 @@ wireFileImport("btnImportMidi", "fileMidi", async (file) => {
   const midi = parseMidi(buf);
   const { items, warnings } = midiToItems(midi, {});
   editor.loadItems(items, {
+    trackName: file.name,
     announceMsg: `imported ${file.name}, ${items.length} items${warnings.length ? ", " + warnings.length + " warnings" : ""}`,
   });
   if (warnings.length) console.warn(warnings.join("\n"));
+});
+
+// ---- Project save/open (lossless intermediate representation) -------------
+//
+// Unlike .ahap (which merges tracks and only informally carries tempo/time
+// signature via extra Metadata keys), this format is the editor's own -
+// it keeps tracks, curve regions, and the bar/beat grid exactly as authored.
+
+byId("btnSaveProject").addEventListener("click", () => {
+  const project = {
+    formatVersion: 1,
+    items: editor.items,
+    tracks: editor.tracks,
+    activeTrackId: editor.activeTrackId,
+    timeMode: editor.timeMode,
+    timeSig: editor.timeSig,
+    zoomLevel: editor.zoomLevel,
+    tempo: parseFloat(dom.fTempo.value) || 120,
+  };
+  downloadText("pattern.hstudio.json", JSON.stringify(project, null, 2));
+  editor.announce("saved pattern.hstudio.json");
+});
+
+wireFileImport("btnOpenProject", "fileProject", async (file) => {
+  const text = await file.text();
+  const project = JSON.parse(text);
+  editor.tracks = project.tracks && project.tracks.length ? project.tracks : editor.tracks;
+  editor.activeTrackId = project.activeTrackId || editor.tracks[0].id;
+  editor.timeMode = project.timeMode || "raw";
+  editor.timeSig = project.timeSig || { num: 4, den: 4 };
+  editor.zoomLevel = project.zoomLevel || 3;
+  if (project.tempo) dom.fTempo.value = project.tempo;
+  editor.renderTracks();
+  editor.loadItems(project.items || [], { announceMsg: `opened project ${file.name}, ${(project.items || []).length} items` });
+  editor._recomputeTimeStep();
+  editor.render();
 });
 
 // ---- Experimental WebSocket sender -----------------------------------------
@@ -183,7 +257,7 @@ byId("btnWsSend").addEventListener("click", () => {
     editor.alert("not connected");
     return;
   }
-  const events = editor.items.filter((it) => it.kind !== "curve" && it.time >= editor.cursorTime - 1e-9);
+  const events = editor.items.filter((it) => it.kind !== "curve" && it.kind !== "curveRegion" && it.time >= editor.cursorTime - 1e-9);
   const startedAt = performance.now();
   for (const item of events) {
     const delayMs = (item.time - editor.cursorTime) * 1000;

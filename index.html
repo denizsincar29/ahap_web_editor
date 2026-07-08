@@ -26,9 +26,12 @@
     <button type="button" id="btnImportMidi">Import MIDI</button>
     <button type="button" id="btnSaveAhap">Save .ahap</button>
     <button type="button" id="btnExportMsh">Export .msh (raw events)</button>
+    <button type="button" id="btnSaveProject">Save project (.hstudio.json)</button>
+    <button type="button" id="btnOpenProject">Open project</button>
     <input type="file" id="fileAhap" accept=".ahap,.json" class="visually-hidden" aria-hidden="true">
     <input type="file" id="fileMsh" accept=".msh,.txt" class="visually-hidden" aria-hidden="true">
     <input type="file" id="fileMidi" accept=".mid,.midi" class="visually-hidden" aria-hidden="true">
+    <input type="file" id="fileProject" accept=".hstudio.json,.json" class="visually-hidden" aria-hidden="true">
   </section>
 
   <section class="toolbar" aria-label="Insert mode and playback">
@@ -37,7 +40,7 @@
       <legend>Insert mode</legend>
       <label><input type="radio" name="insertMode" value="melody" checked> Melody (letters A-G)</label>
       <label><input type="radio" name="insertMode" value="drums"> Drums (k t s h x o c r)</label>
-      <label><input type="radio" name="insertMode" value="raw"> Raw (t = transient, c = continuous)</label>
+      <label><input type="radio" name="insertMode" value="normal"> Normal (T/C/curves, press N)</label>
     </fieldset>
     <div class="field-row" style="margin:0;">
       <label for="fTempo">Tempo (BPM)</label>
@@ -60,48 +63,60 @@
 
   <section id="helpPanel" class="help-panel" hidden>
     <h2>Keyboard shortcuts</h2>
+    <p>Press <kbd>H</kbd> anywhere in the item list for a compact popup version of this list.</p>
     <h3>Navigation</h3>
     <ul>
       <li><kbd>Left</kbd> / <kbd>Right</kbd> - move time cursor by one step</li>
       <li><kbd>Ctrl+Left</kbd> / <kbd>Ctrl+Right</kbd> - select previous / next item, cursor jumps to it</li>
-      <li><kbd>[</kbd> / <kbd>]</kbd> - decrease / increase time step size</li>
+      <li><kbd>[</kbd> / <kbd>]</kbd> - decrease / increase time step size (seconds mode)</li>
       <li><kbd>Home</kbd> / <kbd>End</kbd> - jump cursor to start / end of pattern</li>
-      <li><kbd>Tab</kbd> - move focus into the item list, form fields, or toolbar as usual</li>
+      <li><kbd>N</kbd> - switch to Normal insert mode from anywhere</li>
     </ul>
-    <h3>Insert (Melody mode)</h3>
+    <h3>Bars and beats</h3>
+    <ul>
+      <li><kbd>-</kbd> (dash) - popup: set time signature and tempo, switches the cursor to bar/beat steps</li>
+      <li><kbd>1</kbd>-<kbd>9</kbd> - while in bar/beat mode, sets zoom: 1 bar, half bar, beat, half beat, triplet, quarter beat, sixth, eighth, sixteenth</li>
+      <li><kbd>1</kbd>-<kbd>6</kbd> - while in plain seconds mode, sets note duration for Melody/Drums instead</li>
+    </ul>
+    <h3>Normal mode (press <kbd>N</kbd> to enter)</h3>
+    <ul>
+      <li><kbd>T</kbd> - insert a transient at the cursor</li>
+      <li><kbd>C</kbd> ... <kbd>C</kbd> - press once to start a continuous event, move the cursor, press again to set its end</li>
+      <li><kbd>Shift+C</kbd> ... <kbd>Shift+C</kbd> - press once to start a curve region, move the cursor, press again to close it</li>
+      <li><kbd>Shift+P</kbd> - with the cursor inside a curve region, opens a popup to add a point (choose sharpness or intensity, enter a value)</li>
+      <li><kbd>A</kbd> / <kbd>D</kbd> / <kbd>R</kbd> - popup to set the selected event's attack / decay / release time</li>
+    </ul>
+    <h3>Melody mode</h3>
     <ul>
       <li><kbd>A</kbd>-<kbd>G</kbd> - insert a note at the cursor, advance cursor by current duration</li>
-      <li><kbd>Shift+A</kbd>-<kbd>Shift+G</kbd> - insert a sharp note</li>
-      <li><kbd>Alt+A</kbd>-<kbd>Alt+G</kbd> - insert a flat note</li>
-      <li><kbd>-</kbd> - rest (advance cursor only)</li>
+      <li><kbd>Shift+A</kbd>-<kbd>Shift+G</kbd> - insert a sharp note; <kbd>Alt+A</kbd>-<kbd>Alt+G</kbd> - flat note</li>
       <li><kbd>!</kbd> then a note - accent the next inserted note (louder)</li>
       <li><kbd>Ctrl+Up</kbd> / <kbd>Ctrl+Down</kbd> - octave up / down</li>
-      <li><kbd>1</kbd>-<kbd>6</kbd> - set note duration: whole, half, quarter, eighth, sixteenth, thirtysecond</li>
     </ul>
-    <h3>Insert (Drums mode)</h3>
+    <h3>Drums mode</h3>
     <ul>
       <li><kbd>K</kbd> kick, <kbd>T</kbd> tom, <kbd>S</kbd> snare, <kbd>H</kbd> closed hi-hat, <kbd>X</kbd> clap, <kbd>O</kbd> open hi-hat, <kbd>C</kbd> crash, <kbd>R</kbd> ride</li>
-      <li><kbd>-</kbd> rest, <kbd>!</kbd> accent next hit, <kbd>1</kbd>-<kbd>6</kbd> duration</li>
-    </ul>
-    <h3>Insert (Raw mode)</h3>
-    <ul>
-      <li><kbd>T</kbd> - insert a plain transient at the cursor</li>
-      <li><kbd>C</kbd> - insert a plain continuous event at the cursor (default 0.2s)</li>
     </ul>
     <h3>Editing</h3>
     <ul>
-      <li><kbd>Enter</kbd> - open the detail form for the selected item (precise numeric editing)</li>
+      <li><kbd>Enter</kbd> - open the full detail form for the selected item (every field at once)</li>
       <li><kbd>Delete</kbd> / <kbd>Backspace</kbd> - delete the selected item</li>
-      <li><kbd>Ctrl+C</kbd> - copy selected item</li>
-      <li><kbd>Ctrl+V</kbd> - paste copied item at the cursor time</li>
-      <li><kbd>Up</kbd> / <kbd>Down</kbd> - nudge selected item's intensity</li>
-      <li><kbd>Shift+Up</kbd> / <kbd>Shift+Down</kbd> - nudge selected item's sharpness</li>
+      <li><kbd>M</kbd> - mark the start, then the end, of a time range on the active track</li>
+      <li><kbd>Ctrl+C</kbd> - copy the selection, or every item in the marked range on the active track</li>
+      <li><kbd>Ctrl+V</kbd> - paste the copied item(s) at the cursor, onto the active track</li>
+      <li><kbd>Up</kbd> / <kbd>Down</kbd> - nudge selected item's intensity; <kbd>Shift+Up</kbd>/<kbd>Shift+Down</kbd> nudges sharpness</li>
+    </ul>
+    <h3>Tracks</h3>
+    <ul>
+      <li>Tracks are an editor-only way to organize items (e.g. keep transients and continuous events separate so you can range-copy just one kind). They're merged together when you export to <code>.ahap</code>.</li>
+      <li><kbd>V</kbd> - toggle showing only the active track's items in the list</li>
+      <li>Use the Tracks panel below the item list to add, rename (<kbd>Enter</kbd>), switch (<kbd>Up</kbd>/<kbd>Down</kbd>), or delete tracks</li>
     </ul>
     <h3>Playback</h3>
     <ul>
       <li><kbd>P</kbd> - preview the selected item alone</li>
       <li><kbd>Ctrl+Space</kbd> - play the whole pattern from the cursor</li>
-      <li><kbd>Escape</kbd> - stop playback</li>
+      <li><kbd>Escape</kbd> - stop playback, or clear a marked range if one is active</li>
     </ul>
   </section>
 
@@ -111,10 +126,19 @@
       id="itemList"
       class="item-list"
       role="listbox"
-      aria-label="Haptic pattern items, use arrow keys to navigate and letter keys to insert"
+      aria-label="Haptic pattern items, use arrow keys to navigate and letter keys to insert, H for shortcuts"
       tabindex="0">
     </div>
-    <p id="emptyHint" class="empty-hint">No items yet. Focus this list and start typing note letters, or import a MIDI / .msh file.</p>
+    <p id="emptyHint" class="empty-hint">No items yet. Focus this list and start typing note letters, press N for Normal mode, or import a MIDI / .msh file. Press H for a shortcuts popup.</p>
+  </section>
+
+  <section aria-label="Tracks" class="tracks-panel">
+    <h2>Tracks</h2>
+    <p class="hint-text">Editor-only lanes for organizing items (e.g. transients vs continuous events). Merged together on .ahap export.</p>
+    <div id="trackList" role="listbox" aria-label="Tracks: Up/Down to switch, Enter to rename" tabindex="0"></div>
+    <button type="button" id="btnAddTrack">Add track</button>
+    <button type="button" id="btnDeleteTrack">Delete active track</button>
+    <label><input type="checkbox" id="chkSoloTrack"> Show only active track (V)</label>
   </section>
 
   <section id="detailForm" class="detail-form" hidden aria-label="Item details">
@@ -176,6 +200,18 @@
     <button type="button" id="btnWsSend">Send pattern from cursor</button>
     <span id="wsStatus">Not connected</span>
   </section>
+  <div id="popup" class="popup-overlay" hidden>
+    <div class="popup-box" role="dialog" aria-modal="true" aria-labelledby="popupTitle">
+      <h2 id="popupTitle"></h2>
+      <form id="popupForm">
+        <div id="popupFields"></div>
+        <div class="form-actions">
+          <button type="submit" id="popupOk">OK</button>
+          <button type="button" id="popupCancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </main>
 
 <script type="module" src="js/main.js"></script>
