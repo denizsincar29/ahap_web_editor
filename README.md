@@ -28,45 +28,67 @@ server.
   (`Version`/`Metadata`/`Pattern`, `HapticTransient`/`HapticContinuous`
   events, `ParameterCurve` control points), so files round-trip with
   `ahap_rs` and with Apple's own tooling.
-- **Manual keyboard authoring, DAW-style** - an accessible item list
-  (`role="listbox"`, `aria-activedescendant`, live-region announcements for
-  every action):
-  - `Left`/`Right` moves a time cursor; `Ctrl+Left`/`Ctrl+Right` moves the
-    selection between existing items.
-  - `N` switches to **Normal** mode from anywhere. In Normal mode: `T`
-    inserts a transient; `C` then `C` again starts and closes a continuous
-    event (press once at the start time, move the cursor, press again at
-    the end time); `Shift+C` then `Shift+C` again starts and closes a
-    **curve region**; `Shift+P`, with the cursor inside a curve region,
-    opens a popup to add a point (choose sharpness or intensity, enter a
-    value); `A`/`D`/`R` open a popup to set the selected event's
-    attack/decay/release time.
+- **Manual keyboard authoring, DAW/MuseScore-style** - an accessible item
+  list (`role="listbox"`, `aria-activedescendant`, live-region
+  announcements for every action):
+  - `Left`/`Right` moves the cursor by one step and clears any selection;
+    `Shift+Left`/`Shift+Right` extends/shrinks a time-range selection
+    instead; `Ctrl+Left`/`Ctrl+Right` jumps a whole bar;
+    `Ctrl+Shift+Left`/`Right` extends the selection by a bar.
+  - `Up`/`Down` switch the active track; `Shift+Up`/`Shift+Down`
+    grow/shrink the selection across tracks (so you can, say, select 4 bars
+    of transients on one track without touching a continuous-events track).
+  - `N` switches to **Normal** mode from anywhere (same key MuseScore uses
+    for its note-input toggle). In Normal mode: `T` inserts a transient;
+    `C` then `C` again starts and closes a continuous event; `Shift+C` then
+    `Shift+C` again starts and closes a **curve region**; `Shift+P`, with
+    the cursor inside a curve region, opens a popup to add a point (notes
+    placed inside a curve region's time span stay independent events - the
+    region only modulates them, it never absorbs them as curve points);
+    `A`/`D`/`R` open a popup for the selected event's attack/decay/release.
   - **Melody** mode (`A`-`G`, `Shift` for sharp, `Alt` for flat, `!` to
     accent, `Ctrl+Up`/`Ctrl+Down` for octave) and **Drums** mode
-    (`k t s h x o c r`) work as before.
+    (`k t s h x o c r`) work as before. Duration/rest entry follows
+    MuseScore's digit layout: `1`=64th ... `5`=quarter ... `7`=whole,
+    `8`=double whole (breve), `9`=longa, `0`=rest of the current duration -
+    sticky, so `4 c d e f` enters four eighth notes and `5 g c` switches to
+    quarter notes for the next two, same muscle memory as MuseScore.
   - Press `-` (dash) for a popup to set time signature and tempo; this
-    switches cursor movement from raw seconds to bars/beats. While in that
-    mode, `1`-`9` zoom the step size (bar, half bar, beat, half beat,
-    triplet, quarter beat, sixth, eighth, sixteenth); in plain seconds mode
-    `1`-`6` instead set the Melody/Drums note duration.
-  - `M` marks a time range (press once for the start, again for the end);
-    `Ctrl+C`/`Ctrl+V` then copy every item in that range **on the active
-    track** and paste them at the cursor - the mechanism behind "copy 4
-    bars of transients, skip everything else".
+    switches cursor movement from raw seconds to bars/beats.
+    `Shift+1`-`Shift+9` then zoom the step size (bar, half bar, beat, half
+    beat, triplet, quarter beat, sixth, eighth, sixteenth).
+  - `Ctrl+C`/`Ctrl+X`/`Ctrl+V` copy/cut/paste either the current selection
+    (if one is active, across however many tracks it spans) or the single
+    selected item; multi-item paste keeps each item's original track.
   - **Tracks** are an editor-only way to group items (e.g. keep transients
     and continuous events on separate lanes for range-copying). They're
     merged together into a single `Pattern` array on `.ahap` export. `V`
     toggles showing only the active track; the Tracks panel below the item
     list lets you add/rename/switch/delete tracks.
-  - `Enter` opens a full form for every field at once (time, duration,
-    intensity, sharpness, attack/decay/release, a free-text label used for
-    screen reader announcements) when you want everything in one place
-    instead of one popup per field.
-  - `H` opens a compact popup listing every shortcut; there's also a
-    persistent, expandable panel (`Keyboard shortcuts` button) with the
-    same information plus more context.
-  - `Delete`/`Backspace` deletes, `Up`/`Down` (and `Shift+Up`/`Shift+Down`)
-    nudge intensity/sharpness without opening any popup.
+  - `Enter` opens a full form for every field at once; `PageUp`/`PageDown`
+    (and `Shift+PageUp`/`Shift+PageDown`) nudge intensity/sharpness without
+    opening any popup.
+  - `H` opens a compact popup listing every shortcut, focused on the
+    dialog itself (not the Close button) so a screen reader starts reading
+    from the top with arrow keys immediately; there's also a persistent,
+    expandable panel (`Keyboard shortcuts` button) with the same
+    information plus more context.
+  - `Delete`/`Backspace` deletes the selected item.
+- **Pitch-bend from notes**: in Melody mode, `Shift+C` starts a curve
+  capture instead of the manual empty-region flow - type notes as usual
+  and each one becomes a pitch point rather than its own event; `Shift+C`
+  again closes it and builds one continuous "carrier" event plus a
+  sharpness curve that eases between the pitches, the live-keystroke
+  equivalent of a `.msh` tied group like `(DE)`. Elsewhere, `Shift+C`
+  keeps the original manual flow (empty region, add points with
+  `Shift+P`). Because `Shift+C` is claimed globally, C-sharp in Melody
+  mode needs its enharmonic equivalent: `Alt+D`.
+- **Nearest-octave note entry**, MuseScore-style: each new note's octave
+  is chosen to be closest to the last note you typed (so `B` then `C`
+  lands on the C *above* that B, not four octaves below), instead of a
+  fixed "current octave". `Ctrl+Up`/`Ctrl+Down` transposes the last note
+  (or the in-progress curve-capture note) by an octave, and subsequent
+  notes continue from there.
 - **A lossless project format** (`Save project (.hstudio.json)`) that keeps
   tracks, curve regions, and the bar/beat grid exactly as authored, since
   `.ahap` itself has no concept of tracks and only informally carries

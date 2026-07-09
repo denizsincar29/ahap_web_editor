@@ -39,6 +39,7 @@ const dom = {
   fLabel: byId("fLabel"),
   btnCancelEdit: byId("btnCancelEdit"),
   popup: byId("popup"),
+  popupBox: byId("popupBox"),
   popupTitle: byId("popupTitle"),
   popupForm: byId("popupForm"),
   popupFields: byId("popupFields"),
@@ -48,6 +49,7 @@ const dom = {
   btnAddTrack: byId("btnAddTrack"),
   btnDeleteTrack: byId("btnDeleteTrack"),
   chkSoloTrack: byId("chkSoloTrack"),
+  statusRange: byId("statusRange"),
 };
 
 const editor = new Editor(dom);

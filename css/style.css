@@ -252,6 +252,7 @@ input:focus-visible,
   max-height: 85vh;
   overflow-y: auto;
 }
+.popup-box:focus { outline: 3px solid var(--accent); outline-offset: 2px; }
 .popup-box h2 { margin-top: 0; }
 .popup-box .field-row input[type="text"],
 .popup-box .field-row input[type="number"] {

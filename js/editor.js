@@ -5,12 +5,16 @@ import {
   cloneItem,
   sortItems,
   itemEndTime,
-  noteFreq,
   freqToSharpness,
+  sharpnessToFreq,
   FREQ_MIN,
   FREQ_MAX,
 } from "./ahap.js";
 import { AudioEngine } from "./audio.js";
+
+// Semitone offsets from C, used for MuseScore-style nearest-octave note
+// entry (see Editor._resolveNoteMidiAndFreq).
+const NOTE_SEMITONE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 
 const DRUM_LABELS = {
   k: { name: "kick", shape: "punch", sharpness: 0.3 },
@@ -22,10 +26,24 @@ const DRUM_LABELS = {
   c: { name: "crash", shape: "ring", sharpness: 0.6 },
   r: { name: "ride", shape: "ring", sharpness: 0.55 },
 };
-const DENOM_NAME = { 1: "whole", 2: "half", 4: "quarter", 8: "eighth", 16: "sixteenth", 32: "thirtysecond" };
-const KEY_TO_DENOM = { 1: 1, 2: 2, 3: 4, 4: 8, 5: 16, 6: 32 };
-// Zoom levels 1-9 while in bar/beat time mode, expressed as a fraction of
-// one beat (levels 1-2 are fractions of a whole bar instead).
+// MuseScore-style duration digit keys: 1 = 64th ... 7 = whole, 8 = double
+// whole (breve), 9 = longa (4 whole notes), 0 = rest of current duration.
+// The "denom" here means "quarters per whole note is 4/denom", same
+// convention as a time signature's beat unit, so denom < 1 is valid.
+const KEY_TO_DENOM = { 1: 64, 2: 32, 3: 16, 4: 8, 5: 4, 6: 2, 7: 1, 8: 0.5, 9: 0.25 };
+const DENOM_NAME = {
+  64: "sixty-fourth",
+  32: "thirty-second",
+  16: "sixteenth",
+  8: "eighth",
+  4: "quarter",
+  2: "half",
+  1: "whole",
+  0.5: "double whole (breve)",
+  0.25: "longa",
+};
+// Zoom levels 1-9 (Shift+1..Shift+9) while in bar/beat time mode, expressed
+// as a fraction of one beat (levels 1-2 are fractions of a whole bar).
 const ZOOM_LABEL = {
   1: "1 bar",
   2: "half bar",
@@ -39,28 +57,37 @@ const ZOOM_LABEL = {
 };
 
 const SHORTCUT_SUMMARY = [
-  ["Left / Right", "move time cursor by one step"],
-  ["Ctrl+Left / Ctrl+Right", "select previous / next item"],
-  ["[ / ]", "halve / double the time step"],
+  ["Left / Right", "move cursor by one step; clears any selection"],
+  ["Shift+Left / Shift+Right", "extend/shrink a time-range selection"],
+  ["Ctrl+Left / Ctrl+Right", "move cursor by one bar"],
+  ["Ctrl+Shift+Left / Right", "extend selection by one bar"],
+  ["Up / Down", "switch the active track"],
+  ["Shift+Up / Shift+Down", "shrink / grow the selection across tracks"],
+  ["Ctrl+Up / Ctrl+Down", "octave-shift the last note typed (Melody mode); next notes continue from there"],
+  ["PageUp / PageDown", "nudge selected item's intensity"],
+  ["Shift+PageUp / PageDown", "nudge selected item's sharpness"],
+  ["[ / ]", "halve / double the time step (seconds mode)"],
   ["Home / End", "cursor to start / end of pattern"],
-  ["N", "switch to Normal insert mode"],
+  ["N", "switch to Normal insert mode (like MuseScore's N)"],
   ["T (Normal mode)", "insert a transient at the cursor"],
   ["C ... C (Normal mode)", "start / close a continuous event"],
-  ["Shift+C ... Shift+C", "start / close a curve region"],
-  ["Shift+P", "add a curve point (popup: parameter + value)"],
+  ["Shift+C ... Shift+C (Melody mode)", "capture notes into a pitch-bend curve + carrier event"],
+  ["Shift+C ... Shift+C (other modes)", "start / close an empty curve region for manual points"],
+  ["Shift+P", "add a curve point to a closed region (popup: parameter + value)"],
   ["A / D / R (Normal mode)", "set attack / decay / release (popup)"],
   ["- (dash)", "set time signature + tempo, switch to bar/beat cursor"],
-  ["1-9", "zoom (bar/beat mode) or note duration (melody/drums)"],
-  ["A-G (Melody mode)", "insert a note; Shift = sharp, Alt = flat"],
+  ["1-9", "note/rest duration, MuseScore-style (1=64th ... 7=whole, 8=breve, 9=longa)"],
+  ["0", "insert a rest of the current duration"],
+  ["Shift+1 - Shift+9", "zoom the cursor step while in bar/beat mode"],
+  ["A-G (Melody mode)", "insert a note; Shift = sharp, Alt = flat (for C#, use Alt+D since Shift+C is taken by curve capture)"],
   ["k t s h x o c r (Drums mode)", "insert a drum hit"],
-  ["M", "mark range start/end (for track-scoped copy)"],
-  ["Ctrl+C / Ctrl+V", "copy selection or marked range / paste at cursor"],
-  ["Up / Down", "nudge intensity; Shift+Up/Down nudges sharpness"],
+  ["Ctrl+C / Ctrl+X / Ctrl+V", "copy / cut selection (or item) / paste at cursor"],
   ["Enter", "open the full detail form for the selected item"],
   ["Delete / Backspace", "delete the selected item"],
   ["P", "preview the selected item"],
   ["Ctrl+Space", "play the whole pattern from the cursor"],
-  ["Escape", "stop playback / cancel a popup / clear the range mark"],
+  ["Ctrl+Shift+Space", "play the whole pattern from the beginning"],
+  ["Escape", "stop playback / clear selection / cancel a popup"],
   ["V", "show only the active track's items"],
   ["H", "this shortcuts popup"],
 ];
@@ -82,6 +109,16 @@ export class Editor {
     // two-stage insert state
     this.openContinuousId = null;
     this.openCurveRegionId = null;
+    // Melody-mode curve capture: while active, note letters become pitch
+    // points instead of independent events (see startOrCloseCurveRegion).
+    this._curveCapture = null;
+
+    // Nearest-octave note entry, like MuseScore: the octave of each new
+    // note is chosen to be closest to the previously entered pitch, not a
+    // fixed "current octave". `octave` is still kept in sync for display
+    // and as the starting point before any note has been entered.
+    this.lastNoteMidi = null;
+    this._lastNoteItemId = null;
 
     // bar/beat time mode
     this.timeMode = "raw"; // 'raw' | 'bars'
@@ -93,9 +130,8 @@ export class Editor {
     this.activeTrackId = "track1";
     this.soloTrack = false;
 
-    // range mark for track-scoped copy
-    this.rangeStart = null;
-    this.rangeEnd = null;
+    // time-range selection for copy/cut, can span multiple tracks
+    this.selection = null; // { anchor, start, end, trackIds: Set<string> }
 
     this._bindToolbar();
     this._bindListKeys();
@@ -163,6 +199,7 @@ export class Editor {
     this.items = items;
     this.selectedId = items.length ? sortItems(items)[0].id : null;
     this.cursorTime = 0;
+    this.selection = null;
     this.render();
     if (announceMsg) this.announce(announceMsg);
   }
@@ -178,25 +215,94 @@ export class Editor {
   }
 
   moveCursorBy(deltaSteps) {
+    this.selection = null;
     this.cursorTime = Math.max(0, this.cursorTime + deltaSteps * this.timeStep);
     this.render();
     this.announce(this.formatCursor());
   }
 
-  moveSelectionAdjacent(direction) {
-    const list = this.visibleItems();
-    if (!list.length) {
-      this.announce("no items");
+  moveCursorByBar(direction) {
+    this.selection = null;
+    this.cursorTime = Math.max(0, this.cursorTime + direction * this._barSeconds());
+    this.render();
+    this.announce(this.formatCursor());
+  }
+
+  _barSeconds() {
+    const bpm = parseFloat(this.dom.fTempo.value) || 120;
+    const beatSeconds = (4.0 / this.timeSig.den) * (60.0 / bpm);
+    return beatSeconds * this.timeSig.num;
+  }
+
+  _ensureSelectionAnchor() {
+    if (!this.selection) {
+      this.selection = { anchor: this.cursorTime, start: this.cursorTime, end: this.cursorTime, trackIds: new Set([this.activeTrackId]) };
+    }
+  }
+
+  _moveCursorWithinSelection(newCursorTime) {
+    this._ensureSelectionAnchor();
+    this.cursorTime = Math.max(0, newCursorTime);
+    const a = this.selection.anchor;
+    const b = this.cursorTime;
+    this.selection.start = Math.min(a, b);
+    this.selection.end = Math.max(a, b);
+    this.render();
+  }
+
+  extendSelectionBySteps(direction) {
+    this._moveCursorWithinSelection(this.cursorTime + direction * this.timeStep);
+    this.announce(this._describeSelection());
+  }
+
+  extendSelectionByBar(direction) {
+    this._moveCursorWithinSelection(this.cursorTime + direction * this._barSeconds());
+    this.announce(this._describeSelection());
+  }
+
+  extendSelectionTrackDown() {
+    this._ensureSelectionAnchor();
+    const currentIdx = this.tracks.map((t, i) => (this.selection.trackIds.has(t.id) ? i : -1)).filter((i) => i >= 0);
+    const maxIdx = Math.max(...currentIdx);
+    if (maxIdx + 1 < this.tracks.length) this.selection.trackIds.add(this.tracks[maxIdx + 1].id);
+    this.render();
+    this.announce(this._describeSelection());
+  }
+
+  extendSelectionTrackUp() {
+    if (!this.selection || this.selection.trackIds.size <= 1) {
+      this.announce("selection has only one track");
       return;
     }
-    let idx = this.selectedIndex();
-    if (idx < 0) idx = direction > 0 ? -1 : list.length;
-    idx += direction;
-    if (idx < 0 || idx >= list.length) {
-      this.announce(direction > 0 ? "end of pattern" : "start of pattern");
-      return;
-    }
-    this.select(list[idx].id);
+    const currentIdx = this.tracks.map((t, i) => (this.selection.trackIds.has(t.id) ? i : -1)).filter((i) => i >= 0);
+    const maxIdx = Math.max(...currentIdx);
+    this.selection.trackIds.delete(this.tracks[maxIdx].id);
+    this.render();
+    this.announce(this._describeSelection());
+  }
+
+  _describeSelection() {
+    if (!this.selection) return "no selection";
+    const n = this.itemsInSelection().length;
+    const trackNames = [...this.selection.trackIds].map((id) => this.trackName(id)).join(", ");
+    return `selection ${this.selection.start.toFixed(3)}s to ${this.selection.end.toFixed(3)}s on ${trackNames}, ${n} items`;
+  }
+
+  clearSelection() {
+    if (!this.selection) return false;
+    this.selection = null;
+    this.render();
+    this.announce("selection cleared");
+    return true;
+  }
+
+  switchActiveTrack(direction) {
+    const idx = this.tracks.findIndex((t) => t.id === this.activeTrackId);
+    const next = this.tracks[Math.min(this.tracks.length - 1, Math.max(0, idx + direction))];
+    this.activeTrackId = next.id;
+    this.renderTracks();
+    this.render();
+    this.announce(`active track: ${next.name}`);
   }
 
   changeStep(factor) {
@@ -206,6 +312,10 @@ export class Editor {
   }
 
   setZoomLevel(n) {
+    if (this.timeMode !== "bars") {
+      this.announce("zoom only applies in bar/beat mode, press dash first to set a time signature");
+      return;
+    }
     this.zoomLevel = n;
     this._recomputeTimeStep();
     this.render();
@@ -280,20 +390,102 @@ export class Editor {
     return a;
   }
 
+  insertRestCurrentDuration() {
+    const dur = this.noteDurationSeconds();
+    this.selection = null;
+    this.cursorTime += dur;
+    this.render();
+    this.announce(`rest, ${DENOM_NAME[this.durationDenom] || this.durationDenom}, cursor now ${this.cursorTime.toFixed(3)} seconds`);
+  }
+
+  // Picks the octave for a newly typed note letter the way MuseScore does:
+  // whichever candidate octave puts the note closest to the last entered
+  // pitch (falls back to the manually-set `this.octave` for the very
+  // first note of a session).
+  _resolveNoteMidiAndFreq(letter, accidental) {
+    const pitchClass = (((NOTE_SEMITONE[letter] + accidental) % 12) + 12) % 12;
+    let midi;
+    if (this.lastNoteMidi === null || this.lastNoteMidi === undefined) {
+      midi = (this.octave + 1) * 12 + NOTE_SEMITONE[letter] + accidental;
+    } else {
+      const ref = this.lastNoteMidi;
+      const base = ref - (((ref % 12) + 12) % 12);
+      let best = base + pitchClass;
+      for (const offset of [-12, 0, 12]) {
+        const candidate = base + pitchClass + offset;
+        if (Math.abs(candidate - ref) < Math.abs(best - ref)) best = candidate;
+      }
+      midi = best;
+    }
+    const freq = 440 * Math.pow(2, (midi - 69) / 12);
+    return { midi, freq };
+  }
+
+  // Ctrl+Up/Ctrl+Down: transposes the most recently entered note (or the
+  // in-progress curve-capture note) by an octave, and shifts the
+  // reference pitch so subsequent notes continue from there - matching
+  // MuseScore, where octave changes stick for what you type next.
+  _shiftOctave(direction) {
+    if (this._curveCapture && this._curveCapture.notes.length) {
+      const last = this._curveCapture.notes[this._curveCapture.notes.length - 1];
+      last.sharpness = freqToSharpness(sharpnessToFreq(last.sharpness) * Math.pow(2, direction));
+      this.lastNoteMidi = (this.lastNoteMidi ?? 60) + direction * 12;
+      this.announce(`curve note octave ${direction > 0 ? "up" : "down"}`);
+      return;
+    }
+    if (this.lastNoteMidi !== null && this.lastNoteMidi !== undefined) {
+      this.lastNoteMidi += direction * 12;
+      this.octave = Math.floor(this.lastNoteMidi / 12) - 1;
+      const item = this.selectedItem();
+      if (item && this._lastNoteItemId === item.id && (item.kind === "transient" || item.kind === "continuous")) {
+        item.sharpness = freqToSharpness(sharpnessToFreq(item.sharpness) * Math.pow(2, direction));
+      }
+      this.render();
+      this.announce(`octave ${direction > 0 ? "up" : "down"}`);
+    } else {
+      this.octave += direction;
+      this.render();
+      this.announce(`octave ${this.octave}`);
+    }
+  }
+
   insertMelodyNote(letter, accidental) {
     const dur = this.noteDurationSeconds();
-    let freq = noteFreq(letter, accidental, this.octave);
+    const { midi, freq } = this._resolveNoteMidiAndFreq(letter, accidental);
     const clamped = freq < FREQ_MIN || freq > FREQ_MAX;
     const sharpness = freqToSharpness(freq);
     const accented = this.consumeAccent();
     let intensity = Math.min(1, 0.6 + (accented ? 0.15 : 0));
     const accStr = accidental === 1 ? "#" : accidental === -1 ? "b" : "";
-    const label = `note ${letter}${accStr}${this.octave}${accented ? " (accented)" : ""}`;
+    const noteOctave = Math.floor(midi / 12) - 1;
+    const label = `note ${letter}${accStr}${noteOctave}${accented ? " (accented)" : ""}`;
     const item = makeContinuous({ time: this.cursorTime, duration: dur, intensity, sharpness, label });
     this.insert(item);
+    this.lastNoteMidi = midi;
+    this._lastNoteItemId = item.id;
+    this.octave = noteOctave;
     this.cursorTime += dur;
     this.render();
     this.announce(`${label}${clamped ? ", clamped to haptic range" : ""}`);
+  }
+
+  // Called instead of insertMelodyNote while a curve capture is open
+  // (Shift+C in Melody mode): the note becomes a pitch point rather than
+  // its own event - see _closeCurveCapture for how it turns into a
+  // smooth pitch-bend curve on a single underlying continuous event.
+  insertCurveCaptureNote(letter, accidental) {
+    const dur = this.noteDurationSeconds();
+    const { midi, freq } = this._resolveNoteMidiAndFreq(letter, accidental);
+    const clamped = freq < FREQ_MIN || freq > FREQ_MAX;
+    const sharpness = freqToSharpness(freq);
+    const accented = this.consumeAccent();
+    this._curveCapture.notes.push({ sharpness, duration: dur, accented });
+    this.lastNoteMidi = midi;
+    this.octave = Math.floor(midi / 12) - 1;
+    this.cursorTime += dur;
+    this.render();
+    const accStr = accidental === 1 ? "#" : accidental === -1 ? "b" : "";
+    this.announce(`curve note ${letter}${accStr}${this.octave}${clamped ? ", clamped" : ""}, ${this._curveCapture.notes.length} notes captured`);
   }
 
   insertDrum(letterKey) {
@@ -356,6 +548,11 @@ export class Editor {
   }
 
   startOrCloseCurveRegion() {
+    if (this.mode === "melody") {
+      if (this._curveCapture) this._closeCurveCapture();
+      else this._openCurveCapture();
+      return;
+    }
     if (this.openCurveRegionId) {
       const region = this.items.find((it) => it.id === this.openCurveRegionId);
       this.openCurveRegionId = null;
@@ -368,13 +565,73 @@ export class Editor {
       }
       region.endTime = Math.max(end, region.time + 0.01);
       this.render();
-      this.announce(`curve region set, ${region.time.toFixed(3)}s to ${region.endTime.toFixed(3)}s`);
+      this.announce(`curve region set, ${region.time.toFixed(3)}s to ${region.endTime.toFixed(3)}s, add points with Shift+P`);
     } else {
       const region = makeCurveRegion({ time: this.cursorTime, endTime: this.cursorTime + 0.01, label: "curve region" });
       this.insert(region);
       this.openCurveRegionId = region.id;
       this.announce(`curve region started at ${this.cursorTime.toFixed(3)} seconds, move cursor and press Shift+C again to set the end`);
     }
+  }
+
+  _openCurveCapture() {
+    this._curveCapture = { time: this.cursorTime, notes: [] };
+    this.announce("curve capture started - type notes to pitch-bend through them, Shift+C again to close");
+  }
+
+  // Converts the captured notes into one continuous "carrier" event (so
+  // there's actual haptic output, not just a modulation curve with
+  // nothing to modulate) plus a sharpness curve region that eases between
+  // each note's pitch - the same technique ahap_rs's .msh tied groups use
+  // for `(DE)` syntax, just built live from keystrokes instead of parsed
+  // from text.
+  _closeCurveCapture() {
+    const capture = this._curveCapture;
+    this._curveCapture = null;
+    if (!capture || capture.notes.length === 0) {
+      this.announce("no notes entered, curve capture cancelled");
+      return;
+    }
+    const totalDuration = capture.notes.reduce((s, n) => s + n.duration, 0);
+    const anyAccented = capture.notes.some((n) => n.accented);
+    const carrier = makeContinuous({
+      time: capture.time,
+      duration: totalDuration,
+      intensity: anyAccented ? 0.85 : 0.7,
+      sharpness: capture.notes[0].sharpness,
+      label: `pitch-bend phrase (${capture.notes.length} notes)`,
+    });
+    this.insert(carrier);
+
+    const points = [];
+    const transition = 0.15; // fraction of each note's tail spent easing into the next
+    const steps = 6;
+    let cursor = 0;
+    for (let i = 0; i < capture.notes.length; i++) {
+      const { sharpness, duration } = capture.notes[i];
+      const holdEnd = cursor + duration * (1 - transition);
+      points.push({ time: cursor, value: sharpness });
+      points.push({ time: holdEnd, value: sharpness });
+      const next = capture.notes[i + 1];
+      if (next) {
+        for (let s = 1; s <= steps; s++) {
+          const t = s / steps;
+          const smooth = t * t * (3 - 2 * t);
+          points.push({ time: holdEnd + (cursor + duration - holdEnd) * t, value: sharpness + (next.sharpness - sharpness) * smooth });
+        }
+      }
+      cursor += duration;
+    }
+    const region = makeCurveRegion({
+      time: capture.time,
+      endTime: capture.time + totalDuration,
+      sharpnessPoints: points,
+      intensityPoints: [],
+      label: "pitch-bend curve",
+    });
+    this.insert(region);
+    this.render();
+    this.announce(`curve set from ${capture.notes.length} notes, ${capture.time.toFixed(3)}s to ${(capture.time + totalDuration).toFixed(3)}s`);
   }
 
   findCurveRegionAtCursor() {
@@ -456,15 +713,6 @@ export class Editor {
     });
   }
 
-  insertRawContinuous() {
-    // legacy single-press insert, kept for the detail-form / programmatic path
-    const item = makeContinuous({ time: this.cursorTime, duration: 0.2, intensity: 0.8, sharpness: 0.5, label: "continuous" });
-    this.insert(item);
-    this.cursorTime += 0.2;
-    this.render();
-    this.announce("continuous event inserted, 0.2 seconds");
-  }
-
   // ---- edit / delete / clipboard -----------------------------------------
 
   deleteSelected() {
@@ -481,50 +729,22 @@ export class Editor {
     this.announce(`deleted ${item.label || item.kind}`);
   }
 
-  markRange() {
-    if (this.rangeStart === null) {
-      this.rangeStart = this.cursorTime;
-      this.rangeEnd = null;
-      this.render();
-      this.announce(`range start marked at ${this.cursorTime.toFixed(3)} seconds`);
-    } else if (this.rangeEnd === null) {
-      let a = this.rangeStart;
-      let b = this.cursorTime;
-      if (b < a) [a, b] = [b, a];
-      this.rangeStart = a;
-      this.rangeEnd = b;
-      this.render();
-      this.announce(`range end marked, ${this.itemsInRange().length} items on active track between ${a.toFixed(3)}s and ${b.toFixed(3)}s`);
-    } else {
-      this.rangeStart = this.cursorTime;
-      this.rangeEnd = null;
-      this.render();
-      this.announce(`range restarted at ${this.cursorTime.toFixed(3)} seconds`);
-    }
+  itemsInSelection() {
+    if (!this.selection) return [];
+    return this.items.filter(
+      (it) => this.selection.trackIds.has(it.trackId) && it.time >= this.selection.start - 1e-9 && it.time <= this.selection.end + 1e-9
+    );
   }
 
-  clearRange() {
-    if (this.rangeStart === null) return;
-    this.rangeStart = null;
-    this.rangeEnd = null;
-    this.render();
-    this.announce("range cleared");
-  }
-
-  itemsInRange() {
-    if (this.rangeStart === null || this.rangeEnd === null) return [];
-    return this.items.filter((it) => it.trackId === this.activeTrackId && it.time >= this.rangeStart - 1e-9 && it.time <= this.rangeEnd + 1e-9);
-  }
-
-  copySelectionOrRange() {
-    if (this.rangeStart !== null && this.rangeEnd !== null) {
-      const items = this.itemsInRange();
+  copySelectionOrItem() {
+    if (this.selection) {
+      const items = this.itemsInSelection();
       if (!items.length) {
-        this.announce("no items in the marked range on the active track");
+        this.announce("no items in the selection");
         return;
       }
-      this.clipboard = { multi: true, anchor: this.rangeStart, items: items.map((it) => JSON.parse(JSON.stringify(it))) };
-      this.announce(`copied ${items.length} items from the marked range`);
+      this.clipboard = { multi: true, anchor: this.selection.start, items: items.map((it) => JSON.parse(JSON.stringify(it))) };
+      this.announce(`copied ${items.length} items`);
       return;
     }
     const item = this.selectedItem();
@@ -536,18 +756,43 @@ export class Editor {
     this.announce(`copied ${item.label || item.kind}`);
   }
 
+  cutSelectionOrItem() {
+    if (this.selection) {
+      const items = this.itemsInSelection();
+      if (!items.length) {
+        this.announce("no items in the selection");
+        return;
+      }
+      this.clipboard = { multi: true, anchor: this.selection.start, items: items.map((it) => JSON.parse(JSON.stringify(it))) };
+      const ids = new Set(items.map((it) => it.id));
+      this.items = this.items.filter((it) => !ids.has(it.id));
+      this.selection = null;
+      this.render();
+      this.announce(`cut ${items.length} items`);
+      return;
+    }
+    const item = this.selectedItem();
+    if (!item) {
+      this.announce("nothing selected to cut");
+      return;
+    }
+    this.clipboard = { multi: false, item: JSON.parse(JSON.stringify(item)) };
+    this.deleteSelected();
+  }
+
   pasteAtCursor() {
     if (!this.clipboard) {
       this.announce("clipboard empty");
       return;
     }
     if (this.clipboard.multi) {
+      // Preserves each item's original track so multi-track cut/copy
+      // reproduces the same structure at the new time.
       const shift = this.cursorTime - this.clipboard.anchor;
       const pasted = this.clipboard.items.map((src) => {
         const copy = cloneItem(src);
         copy.time = src.time + shift;
         if (copy.kind === "curveRegion") copy.endTime = src.endTime + shift;
-        copy.trackId = this.activeTrackId;
         return copy;
       });
       this.items.push(...pasted);
@@ -592,6 +837,13 @@ export class Editor {
       this.select(item.id, { moveCursor: false, quiet: true });
     });
     this.announce(`playing from ${this.cursorTime.toFixed(3)} seconds`);
+  }
+
+  playFromBeginning() {
+    this.audio.playFrom(this.items, 0, (item) => {
+      this.select(item.id, { moveCursor: false, quiet: true });
+    });
+    this.announce("playing from the beginning");
   }
 
   stopPlayback() {
@@ -640,9 +892,9 @@ export class Editor {
       row.setAttribute("role", "option");
       row.setAttribute("aria-selected", String(item.id === this.selectedId));
       const kindLabel = item.kind === "transient" ? "Transient" : item.kind === "continuous" ? "Continuous" : item.kind === "curveRegion" ? "Curve region" : "Curve";
-      const inRange =
-        this.rangeStart !== null && this.rangeEnd !== null && item.trackId === this.activeTrackId && item.time >= this.rangeStart - 1e-9 && item.time <= this.rangeEnd + 1e-9;
-      if (inRange) row.classList.add("in-range");
+      const inSelection =
+        this.selection && this.selection.trackIds.has(item.trackId) && item.time >= this.selection.start - 1e-9 && item.time <= this.selection.end + 1e-9;
+      if (inSelection) row.classList.add("in-range");
       const trackTag = this.tracks.length > 1 ? `[${this.trackName(item.trackId)}] ` : "";
       let ivs = "";
       if (item.kind === "transient" || item.kind === "continuous") ivs = `I ${item.intensity.toFixed(2)}`;
@@ -671,10 +923,15 @@ export class Editor {
     const idx = this.selectedIndex();
     this.dom.statusSelection.textContent = sel ? `Selected: item ${idx + 1} of ${list.length}` : "Selected: none";
     this.dom.statusCount.textContent = `${list.length} item${list.length === 1 ? "" : "s"}${this.soloTrack ? " (solo)" : ""}`;
-    this.dom.statusOctave.textContent = `Octave: ${this.octave}`;
+    this.dom.statusOctave.textContent = `Octave: ${this.octave} | Active track: ${this.trackName(this.activeTrackId)}`;
     this.dom.statusDuration.textContent =
       this.timeMode === "bars" ? `Zoom: ${ZOOM_LABEL[this.zoomLevel]}` : `Duration: ${DENOM_NAME[this.durationDenom]}`;
     this.dom.statusStep.textContent = `Time step: ${this.timeStep.toFixed(3)}s`;
+    if (this.dom.statusRange) {
+      this.dom.statusRange.textContent = this.selection
+        ? `Range: ${this.selection.start.toFixed(3)}s-${this.selection.end.toFixed(3)}s (${this.selection.trackIds.size} track${this.selection.trackIds.size === 1 ? "" : "s"})`
+        : "Range: none";
+    }
   }
 
   renderTracks() {
@@ -838,9 +1095,12 @@ export class Editor {
       }
       this.dom.popupFields.appendChild(row);
     }
+    this.dom.popupCancel.textContent = "Cancel";
     this.dom.popupOk.hidden = !!infoOnly;
     this.dom.popup.hidden = false;
     this._popupReturnFocus = document.activeElement;
+    // Value-entry popups are forms: focusing the first field is expected
+    // and lets a screen reader announce its label immediately.
     (firstInput || this.dom.popupCancel).focus();
   }
 
@@ -888,7 +1148,12 @@ export class Editor {
     this.dom.popup.hidden = false;
     this._popupReturnFocus = document.activeElement;
     this.dom.popupCancel.textContent = "Close";
-    this.dom.popupCancel.focus();
+    // This is a read-only dialog, not a form: focus the dialog box itself
+    // (tabindex="-1") rather than the Close button, so a screen reader
+    // starts reading from the title and the list can be browsed with
+    // arrow keys right away, without needing Ctrl+Home first.
+    if (this.dom.popupBox) this.dom.popupBox.focus();
+    else this.dom.popupCancel.focus();
   }
 
   // ---- form bindings (detail edit) -------------------------------------
@@ -963,27 +1228,45 @@ export class Editor {
   _onKeydown(e) {
     const k = e.key;
 
-    // Navigation ------------------------------------------------------
-    if (k === "ArrowLeft" && !e.ctrlKey) {
+    // Left / Right: cursor step, selection extend, or bar jump -----------
+    if (k === "ArrowLeft" || k === "ArrowRight") {
+      const dir = k === "ArrowLeft" ? -1 : 1;
       e.preventDefault();
-      this.moveCursorBy(-1);
+      if (e.ctrlKey && e.shiftKey) this.extendSelectionByBar(dir);
+      else if (e.ctrlKey) this.moveCursorByBar(dir);
+      else if (e.shiftKey) this.extendSelectionBySteps(dir);
+      else this.moveCursorBy(dir);
       return;
     }
-    if (k === "ArrowRight" && !e.ctrlKey) {
+
+    // Up / Down: track switch, track-selection extend, octave, or nudge --
+    if (k === "ArrowUp" || k === "ArrowDown") {
+      const dir = k === "ArrowUp" ? -1 : 1;
       e.preventDefault();
-      this.moveCursorBy(1);
+      if (e.ctrlKey) {
+        this._shiftOctave(-dir); // ArrowUp (dir=-1) raises the octave, ArrowDown lowers it
+      } else if (e.shiftKey) {
+        if (k === "ArrowDown") this.extendSelectionTrackDown();
+        else this.extendSelectionTrackUp();
+      } else {
+        this.switchActiveTrack(dir);
+      }
       return;
     }
-    if (k === "ArrowLeft" && e.ctrlKey) {
+
+    if (k === "PageUp") {
       e.preventDefault();
-      this.moveSelectionAdjacent(-1);
+      if (e.shiftKey) this.nudgeSelected("sharpness", 0.05);
+      else this.nudgeSelected("intensity", 0.05);
       return;
     }
-    if (k === "ArrowRight" && e.ctrlKey) {
+    if (k === "PageDown") {
       e.preventDefault();
-      this.moveSelectionAdjacent(1);
+      if (e.shiftKey) this.nudgeSelected("sharpness", -0.05);
+      else this.nudgeSelected("intensity", -0.05);
       return;
     }
+
     if (k === "[") {
       e.preventDefault();
       this.changeStep(0.5);
@@ -996,6 +1279,7 @@ export class Editor {
     }
     if (k === "Home") {
       e.preventDefault();
+      this.selection = null;
       this.cursorTime = 0;
       this.render();
       this.announce("cursor at start, 0 seconds");
@@ -1003,43 +1287,10 @@ export class Editor {
     }
     if (k === "End") {
       e.preventDefault();
+      this.selection = null;
       this.cursorTime = this.patternEnd();
       this.render();
       this.announce(`cursor at end, ${this.cursorTime.toFixed(3)} seconds`);
-      return;
-    }
-    if (k === "ArrowUp" && e.ctrlKey) {
-      e.preventDefault();
-      this.octave += 1;
-      this.render();
-      this.announce(`octave ${this.octave}`);
-      return;
-    }
-    if (k === "ArrowDown" && e.ctrlKey) {
-      e.preventDefault();
-      this.octave -= 1;
-      this.render();
-      this.announce(`octave ${this.octave}`);
-      return;
-    }
-    if (k === "ArrowUp" && e.shiftKey) {
-      e.preventDefault();
-      this.nudgeSelected("sharpness", 0.05);
-      return;
-    }
-    if (k === "ArrowDown" && e.shiftKey) {
-      e.preventDefault();
-      this.nudgeSelected("sharpness", -0.05);
-      return;
-    }
-    if (k === "ArrowUp") {
-      e.preventDefault();
-      this.nudgeSelected("intensity", 0.05);
-      return;
-    }
-    if (k === "ArrowDown") {
-      e.preventDefault();
-      this.nudgeSelected("intensity", -0.05);
       return;
     }
 
@@ -1054,13 +1305,6 @@ export class Editor {
       this._setModeRadio("normal");
       this.render();
       this.announce("mode: normal (T transient, C continuous, Shift+C curve region)");
-      return;
-    }
-
-    // Range mark ---------------------------------------------------------
-    if (k.toLowerCase() === "m" && !e.ctrlKey && !e.altKey) {
-      e.preventDefault();
-      this.markRange();
       return;
     }
     if (k.toLowerCase() === "v" && !e.ctrlKey && !e.altKey) {
@@ -1092,7 +1336,12 @@ export class Editor {
     }
     if (e.ctrlKey && k.toLowerCase() === "c") {
       e.preventDefault();
-      this.copySelectionOrRange();
+      this.copySelectionOrItem();
+      return;
+    }
+    if (e.ctrlKey && k.toLowerCase() === "x") {
+      e.preventDefault();
+      this.cutSelectionOrItem();
       return;
     }
     if (e.ctrlKey && k.toLowerCase() === "v") {
@@ -1102,6 +1351,11 @@ export class Editor {
     }
 
     // Playback ------------------------------------------------------------
+    if (e.ctrlKey && e.shiftKey && k === " ") {
+      e.preventDefault();
+      this.playFromBeginning();
+      return;
+    }
     if (e.ctrlKey && k === " ") {
       e.preventDefault();
       this.playFromCursor();
@@ -1109,8 +1363,7 @@ export class Editor {
     }
     if (k === "Escape") {
       e.preventDefault();
-      if (this.rangeStart !== null) this.clearRange();
-      else this.stopPlayback();
+      if (!this.clearSelection()) this.stopPlayback();
       return;
     }
     if (k.toLowerCase() === "p" && !e.ctrlKey && !e.altKey && !e.shiftKey) {
@@ -1124,20 +1377,22 @@ export class Editor {
       return;
     }
 
-    // Digits: zoom (bar/beat mode) or note duration (raw mode) -----------
+    // Duration digits (MuseScore layout) and rest -------------------------
     if (/^[1-9]$/.test(k) && !e.ctrlKey && !e.altKey) {
-      if (this.timeMode === "bars") {
-        e.preventDefault();
+      e.preventDefault();
+      if (e.shiftKey) {
         this.setZoomLevel(parseInt(k, 10));
-        return;
-      }
-      if (k in KEY_TO_DENOM) {
-        e.preventDefault();
+      } else {
         this.durationDenom = KEY_TO_DENOM[k];
         this.render();
         this.announce(`duration ${DENOM_NAME[this.durationDenom]}`);
-        return;
       }
+      return;
+    }
+    if (k === "0" && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      this.insertRestCurrentDuration();
+      return;
     }
 
     // Accent ------------------------------------------------------------
@@ -1148,16 +1403,22 @@ export class Editor {
       return;
     }
 
-    // Normal mode: transient / continuous / curve region / envelope -------
+    // Curve region start/close - global, works in any mode. In Melody
+    // mode this starts/stops note-capture (see startOrCloseCurveRegion);
+    // elsewhere it's the manual empty-region + Shift+P point flow. Note
+    // this claims Shift+C everywhere, so a literal C-sharp in Melody mode
+    // needs its enharmonic equivalent: Alt+D (D-flat = C-sharp).
+    if (k.toLowerCase() === "c" && e.shiftKey && !e.ctrlKey) {
+      e.preventDefault();
+      this.startOrCloseCurveRegion();
+      return;
+    }
+
+    // Normal mode: transient / continuous / envelope ----------------------
     if (this.mode === "normal") {
       if (k.toLowerCase() === "t" && !e.ctrlKey) {
         e.preventDefault();
         this.insertRawTransient();
-        return;
-      }
-      if (k.toLowerCase() === "c" && e.shiftKey) {
-        e.preventDefault();
-        this.startOrCloseCurveRegion();
         return;
       }
       if (k.toLowerCase() === "c" && !e.ctrlKey) {
@@ -1187,7 +1448,8 @@ export class Editor {
       e.preventDefault();
       const letter = k.toUpperCase();
       const accidental = e.shiftKey ? 1 : e.altKey ? -1 : 0;
-      this.insertMelodyNote(letter, accidental);
+      if (this._curveCapture) this.insertCurveCaptureNote(letter, accidental);
+      else this.insertMelodyNote(letter, accidental);
       return;
     }
     if (this.mode === "drums" && /^[ktshxocrKTSHXOCR]$/.test(k)) {

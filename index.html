@@ -59,52 +59,70 @@
     <span id="statusOctave">Octave: 4</span>
     <span id="statusDuration">Duration: eighth</span>
     <span id="statusStep">Time step: 0.05s</span>
+    <span id="statusRange">Range: none</span>
   </section>
 
   <section id="helpPanel" class="help-panel" hidden>
     <h2>Keyboard shortcuts</h2>
     <p>Press <kbd>H</kbd> anywhere in the item list for a compact popup version of this list.</p>
-    <h3>Navigation</h3>
+    <h3>Cursor and selection</h3>
     <ul>
-      <li><kbd>Left</kbd> / <kbd>Right</kbd> - move time cursor by one step</li>
-      <li><kbd>Ctrl+Left</kbd> / <kbd>Ctrl+Right</kbd> - select previous / next item, cursor jumps to it</li>
+      <li><kbd>Left</kbd> / <kbd>Right</kbd> - move cursor by one step, clears any selection</li>
+      <li><kbd>Shift+Left</kbd> / <kbd>Shift+Right</kbd> - extend or shrink a time-range selection</li>
+      <li><kbd>Ctrl+Left</kbd> / <kbd>Ctrl+Right</kbd> - move cursor by one full bar</li>
+      <li><kbd>Ctrl+Shift+Left</kbd> / <kbd>Ctrl+Shift+Right</kbd> - extend the selection by a bar</li>
+      <li><kbd>Up</kbd> / <kbd>Down</kbd> - switch the active track</li>
+      <li><kbd>Shift+Up</kbd> / <kbd>Shift+Down</kbd> - shrink / grow the selection across tracks (start a selection, then Shift+Down to add the next track to it)</li>
       <li><kbd>[</kbd> / <kbd>]</kbd> - decrease / increase time step size (seconds mode)</li>
       <li><kbd>Home</kbd> / <kbd>End</kbd> - jump cursor to start / end of pattern</li>
-      <li><kbd>N</kbd> - switch to Normal insert mode from anywhere</li>
+      <li><kbd>Escape</kbd> - clear the selection, or stop playback if there is none</li>
+      <li><kbd>N</kbd> - switch to Normal insert mode from anywhere (same key as MuseScore's note-input toggle)</li>
     </ul>
     <h3>Bars and beats</h3>
     <ul>
       <li><kbd>-</kbd> (dash) - popup: set time signature and tempo, switches the cursor to bar/beat steps</li>
-      <li><kbd>1</kbd>-<kbd>9</kbd> - while in bar/beat mode, sets zoom: 1 bar, half bar, beat, half beat, triplet, quarter beat, sixth, eighth, sixteenth</li>
-      <li><kbd>1</kbd>-<kbd>6</kbd> - while in plain seconds mode, sets note duration for Melody/Drums instead</li>
+      <li><kbd>Shift+1</kbd>-<kbd>Shift+9</kbd> - while in bar/beat mode, sets zoom: 1 bar, half bar, beat, half beat, triplet, quarter beat, sixth, eighth, sixteenth</li>
+    </ul>
+    <h3>Note/rest duration (MuseScore layout)</h3>
+    <ul>
+      <li><kbd>1</kbd> 64th, <kbd>2</kbd> 32nd, <kbd>3</kbd> 16th, <kbd>4</kbd> 8th, <kbd>5</kbd> quarter, <kbd>6</kbd> half, <kbd>7</kbd> whole, <kbd>8</kbd> double whole (breve), <kbd>9</kbd> longa</li>
+      <li><kbd>0</kbd> - insert a rest of the currently selected duration</li>
+      <li>Duration is sticky: press a digit once, then keep entering notes/drums at that length until you press another digit.</li>
+    </ul>
+    <h3>Curve regions</h3>
+    <ul>
+      <li><kbd>Shift+C</kbd> works in any mode and always starts/closes a curve region, but does two different things:</li>
+      <li><strong>In Melody mode</strong>: starts note-capture. Type notes as usual (<kbd>A</kbd>-<kbd>G</kbd>) - each one becomes a pitch point instead of its own event. <kbd>Shift+C</kbd> again closes the capture and turns the notes into a smooth pitch-bend: one continuous "carrier" event spanning all the notes, plus a sharpness curve that eases between each pitch (the live-keystroke equivalent of a <code>.msh</code> tied group like <code>(DE)</code>).</li>
+      <li><strong>In other modes</strong>: starts an empty curve region; <kbd>Shift+C</kbd> again just sets its end time. Add points to it afterward with <kbd>Shift+P</kbd> (cursor must be inside the region) - a popup lets you choose sharpness or intensity and enter a value.</li>
+      <li>Notes/events entered while the cursor is inside a curve region (but capture is not open) stay fully independent events - a region only modulates whatever overlaps it, it never absorbs notes into curve points on its own.</li>
+      <li>Because <kbd>Shift+C</kbd> is claimed globally, C-sharp in Melody mode needs its enharmonic equivalent: <kbd>Alt+D</kbd> (D-flat = C-sharp).</li>
     </ul>
     <h3>Normal mode (press <kbd>N</kbd> to enter)</h3>
     <ul>
       <li><kbd>T</kbd> - insert a transient at the cursor</li>
       <li><kbd>C</kbd> ... <kbd>C</kbd> - press once to start a continuous event, move the cursor, press again to set its end</li>
-      <li><kbd>Shift+C</kbd> ... <kbd>Shift+C</kbd> - press once to start a curve region, move the cursor, press again to close it</li>
-      <li><kbd>Shift+P</kbd> - with the cursor inside a curve region, opens a popup to add a point (choose sharpness or intensity, enter a value)</li>
       <li><kbd>A</kbd> / <kbd>D</kbd> / <kbd>R</kbd> - popup to set the selected event's attack / decay / release time</li>
     </ul>
     <h3>Melody mode</h3>
     <ul>
       <li><kbd>A</kbd>-<kbd>G</kbd> - insert a note at the cursor, advance cursor by current duration</li>
-      <li><kbd>Shift+A</kbd>-<kbd>Shift+G</kbd> - insert a sharp note; <kbd>Alt+A</kbd>-<kbd>Alt+G</kbd> - flat note</li>
+      <li><kbd>Shift+A</kbd>-<kbd>Shift+G</kbd> - insert a sharp note (except C, see Curve regions above); <kbd>Alt+A</kbd>-<kbd>Alt+G</kbd> - flat note</li>
       <li><kbd>!</kbd> then a note - accent the next inserted note (louder)</li>
-      <li><kbd>Ctrl+Up</kbd> / <kbd>Ctrl+Down</kbd> - octave up / down</li>
+      <li>Octave is chosen automatically for the closest pitch to the last note you typed, the same way MuseScore does it (typing C right after B lands in the next octave up, since that's the nearer C). The very first note of a session uses the manually-set octave below.</li>
+      <li><kbd>Ctrl+Up</kbd> / <kbd>Ctrl+Down</kbd> - shift the last-typed note (or the note in progress inside a curve capture) up/down an octave; every note typed after that continues from the new pitch, matching MuseScore's octave-shift behavior</li>
     </ul>
     <h3>Drums mode</h3>
     <ul>
       <li><kbd>K</kbd> kick, <kbd>T</kbd> tom, <kbd>S</kbd> snare, <kbd>H</kbd> closed hi-hat, <kbd>X</kbd> clap, <kbd>O</kbd> open hi-hat, <kbd>C</kbd> crash, <kbd>R</kbd> ride</li>
     </ul>
-    <h3>Editing</h3>
+    <h3>Editing and clipboard</h3>
     <ul>
       <li><kbd>Enter</kbd> - open the full detail form for the selected item (every field at once)</li>
       <li><kbd>Delete</kbd> / <kbd>Backspace</kbd> - delete the selected item</li>
-      <li><kbd>M</kbd> - mark the start, then the end, of a time range on the active track</li>
-      <li><kbd>Ctrl+C</kbd> - copy the selection, or every item in the marked range on the active track</li>
-      <li><kbd>Ctrl+V</kbd> - paste the copied item(s) at the cursor, onto the active track</li>
-      <li><kbd>Up</kbd> / <kbd>Down</kbd> - nudge selected item's intensity; <kbd>Shift+Up</kbd>/<kbd>Shift+Down</kbd> nudges sharpness</li>
+      <li><kbd>PageUp</kbd> / <kbd>PageDown</kbd> - nudge selected item's intensity; <kbd>Shift+PageUp</kbd>/<kbd>Shift+PageDown</kbd> nudges sharpness</li>
+      <li><kbd>Ctrl+C</kbd> - copy the selection (or the single selected item if there's no range selection)</li>
+      <li><kbd>Ctrl+X</kbd> - cut the selection (or the single selected item)</li>
+      <li><kbd>Ctrl+V</kbd> - paste at the cursor; a multi-item paste keeps each item's original track</li>
     </ul>
     <h3>Tracks</h3>
     <ul>
@@ -116,7 +134,8 @@
     <ul>
       <li><kbd>P</kbd> - preview the selected item alone</li>
       <li><kbd>Ctrl+Space</kbd> - play the whole pattern from the cursor</li>
-      <li><kbd>Escape</kbd> - stop playback, or clear a marked range if one is active</li>
+      <li><kbd>Ctrl+Shift+Space</kbd> - play the whole pattern from the beginning</li>
+      <li><kbd>Escape</kbd> - stop playback (or clear a selection first, if one is active)</li>
     </ul>
   </section>
 
@@ -201,7 +220,7 @@
     <span id="wsStatus">Not connected</span>
   </section>
   <div id="popup" class="popup-overlay" hidden>
-    <div class="popup-box" role="dialog" aria-modal="true" aria-labelledby="popupTitle">
+    <div id="popupBox" class="popup-box" role="dialog" aria-modal="true" aria-labelledby="popupTitle" tabindex="-1">
       <h2 id="popupTitle"></h2>
       <form id="popupForm">
         <div id="popupFields"></div>
